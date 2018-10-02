@@ -28,6 +28,10 @@ class Template {
         return this.container.find('[data-grav-array-mode="value_only"]:first').length || false;
     }
 
+    isTextArea() {
+        return this.container.data('grav-array-textarea') || false;
+    }
+
     shouldBeDisabled() {
         // check for toggleables, if field is toggleable and it's not enabled, render disabled
         let toggle = this.container.closest('.form-field').find('[data-grav-field="toggleable"] input[type="checkbox"]');
@@ -35,20 +39,22 @@ class Template {
     }
 
     getNewRow() {
-        let tpl = '';
+        let tpl = '';const value = this.isTextArea()
+            ? `<textarea ${this.shouldBeDisabled() ? 'disabled="disabled"' : ''} data-grav-array-type="value" name="" placeholder="${this.getValuePlaceholder()}"></textarea>`
+            : `<input ${this.shouldBeDisabled() ? 'disabled="disabled"' : ''} data-grav-array-type="value" type="text" name="" value=""  placeholder="${this.getValuePlaceholder()}" />`;
 
         if (this.isValueOnly()) {
             tpl += `
             <div class="form-row array-field-value_only" data-grav-array-type="row">
                 <span data-grav-array-action="sort" class="fa fa-bars"></span>
-                <input ${this.shouldBeDisabled() ? 'disabled="disabled"' : ''} data-grav-array-type="value" type="text" value="" placeholder="${this.getValuePlaceholder()}" />
+                ${value}
             `;
         } else {
             tpl += `
             <div class="form-row" data-grav-array-type="row">
                 <span data-grav-array-action="sort" class="fa fa-bars"></span>
                 <input ${this.shouldBeDisabled() ? 'disabled="disabled"' : ''} data-grav-array-type="key" type="text" value="" placeholder="${this.getKeyPlaceholder()}" />
-                <input ${this.shouldBeDisabled() ? 'disabled="disabled"' : ''} data-grav-array-type="value" type="text" name="" value=""  placeholder="${this.getValuePlaceholder()}" />
+                ${value}
             `;
         }
 
@@ -96,7 +102,9 @@ export default class ArrayField {
         let keyElement = type === 'key' ? element : element.siblings('[data-grav-array-type="key"]:first');
         let valueElement = type === 'value' ? element : element.siblings('[data-grav-array-type="value"]:first');
 
-        let name = `${template.getName()}[${!template.isValueOnly() ? keyElement.val() : this.getIndexFor(element)}]`;
+        let escaped_name = !template.isValueOnly() ? keyElement.val() : this.getIndexFor(element);
+        escaped_name = escaped_name.toString().replace(/\[/g, '%5B').replace(/]/g, '%5D');
+        let name = `${template.getName()}[${escaped_name}]`;
         valueElement.attr('name', !valueElement.val() ? template.getName() : name);
 
         this.refreshNames(template);

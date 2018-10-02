@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.Page
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -26,15 +26,15 @@ class MediumFactory
             return null;
         }
 
-        $path = dirname($file);
-        $filename = basename($file);
-        $parts = explode('.', $filename);
-        $ext = array_pop($parts);
-        $basename = implode('.', $parts);
+        $parts = pathinfo($file);
+        $path = $parts['dirname'];
+        $filename = $parts['basename'];
+        $ext = $parts['extension'];
+        $basename = $parts['filename'];
 
         $config = Grav::instance()['config'];
 
-        $media_params = $config->get("media.types.".strtolower($ext));
+        $media_params = $config->get("media.types." . strtolower($ext));
         if (!$media_params) {
             return null;
         }
@@ -106,7 +106,7 @@ class MediumFactory
      * @param  ImageMedium $medium
      * @param  int         $from
      * @param  int         $to
-     * @return Medium
+     * @return Medium|array
      */
     public static function scaledFromMedium($medium, $from, $to)
     {
@@ -119,23 +119,27 @@ class MediumFactory
         }
 
         $ratio = $to / $from;
-        $width = (int) ($medium->get('width') * $ratio);
-        $height = (int) ($medium->get('height') * $ratio);
+        $width = $medium->get('width') * $ratio;
+        $height = $medium->get('height') * $ratio;
 
-        $basename = $medium->get('basename');
-        $basename = str_replace('@'.$from.'x', '@'.$to.'x', $basename);
+        $prev_basename = $medium->get('basename');
+        $basename = str_replace('@'.$from.'x', '@'.$to.'x', $prev_basename);
 
         $debug = $medium->get('debug');
         $medium->set('debug', false);
+        $medium->setImagePrettyName($basename);
 
         $file = $medium->resize($width, $height)->path();
 
         $medium->set('debug', $debug);
+        $medium->setImagePrettyName($prev_basename);
 
         $size = filesize($file);
 
         $medium = self::fromFile($file);
-        $medium->set('size', $size);
+        if ($medium) {
+            $medium->set('size', $size);
+        }
 
         return ['file' => $medium, 'size' => $size];
     }

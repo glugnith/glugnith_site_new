@@ -1,16 +1,7 @@
-title: GLUG-NITH
+title: GLUG NITH
 author:
-  name: lokeshh
-  email: lokeshhsharma@gmai.com
-taxonomies:
-  - category
-  - tag
+  name: glug
+  email: 'joe@example.com'
 metadata:
-  description: 'Grav is an easy to use, yet powerful, open source flat-file CMS'
-summary:
-  enabled: true
-  format: short
-  size: 300
-  delimiter: '==='
-blog:
-  route: /blog
+    description: 'Nit Hamirpur Open Source Club'
+

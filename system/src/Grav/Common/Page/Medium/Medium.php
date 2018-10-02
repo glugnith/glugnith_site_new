@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.Page
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,8 +12,9 @@ use Grav\Common\File\CompiledYamlFile;
 use Grav\Common\Grav;
 use Grav\Common\Data\Data;
 use Grav\Common\Data\Blueprint;
+use Grav\Common\Media\Interfaces\MediaObjectInterface;
 
-class Medium extends Data implements RenderableInterface
+class Medium extends Data implements RenderableInterface, MediaObjectInterface
 {
     use ParsedownHtmlTrait;
 
@@ -50,6 +51,11 @@ class Medium extends Data implements RenderableInterface
     protected $styleAttributes = [];
 
     /**
+     * @var array
+     */
+    protected $metadata = [];
+
+    /**
      * Construct.
      *
      * @param array $items
@@ -67,14 +73,53 @@ class Medium extends Data implements RenderableInterface
         $this->reset();
     }
 
+    public function __clone()
+    {
+        // Allows future compatibility as parent::__clone() works.
+    }
+
+    /**
+     * Create a copy of this media object
+     *
+     * @return Medium
+     */
+    public function copy()
+    {
+        return clone $this;
+    }
+
     /**
      * Return just metadata from the Medium object
      *
-     * @return $this
+     * @return Data
      */
     public function meta()
     {
         return new Data($this->items);
+    }
+
+    /**
+     * Check if this medium exists or not
+     *
+     * @return bool
+     */
+    public function exists()
+    {
+        $path = $this->get('filepath');
+        if (file_exists($path)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns an array containing just the metadata
+     *
+     * @return array
+     */
+    public function metadata()
+    {
+        return $this->metadata;
     }
 
     /**
@@ -84,7 +129,8 @@ class Medium extends Data implements RenderableInterface
      */
     public function addMetaFile($filepath)
     {
-        $this->merge(CompiledYamlFile::instance($filepath)->content());
+        $this->metadata = (array)CompiledYamlFile::instance($filepath)->content();
+        $this->merge($this->metadata);
     }
 
     /**
@@ -100,7 +146,9 @@ class Medium extends Data implements RenderableInterface
         }
 
         $alternative->set('ratio', $ratio);
-        $this->alternatives[(float) $ratio] = $alternative;
+        $width = $alternative->get('width');
+
+        $this->alternatives[$width] = $alternative;
     }
 
     /**
@@ -129,6 +177,21 @@ class Medium extends Data implements RenderableInterface
     }
 
     /**
+     * Return the relative path to file
+     *
+     * @param bool $reset
+     * @return mixed
+     */
+    public function relativePath($reset = true)
+    {
+        if ($reset) {
+            $this->reset();
+        }
+
+        return str_replace(GRAV_ROOT, '', $this->get('filepath'));
+    }
+
+    /**
      * Return URL to file.
      *
      * @param bool $reset
@@ -136,20 +199,25 @@ class Medium extends Data implements RenderableInterface
      */
     public function url($reset = true)
     {
-        $output = preg_replace('|^' . preg_quote(GRAV_ROOT) . '|', '', $this->get('filepath'));
+        $output = preg_replace('|^' . preg_quote(GRAV_ROOT, '|') . '|', '', $this->get('filepath'));
+
+        $locator = Grav::instance()['locator'];
+        if ($locator->isStream($output)) {
+            $output = $locator->findResource($output, false);
+        }
 
         if ($reset) {
             $this->reset();
         }
 
-        return Grav::instance()['base_url'] . $output . $this->querystring() . $this->urlHash();
+        return trim(Grav::instance()['base_url'] . '/' . ltrim($output . $this->querystring() . $this->urlHash(), '/'), '\\');
     }
 
     /**
      * Get/set querystring for the file's url
      *
-     * @param  string  $hash
-     * @param  boolean $withHash
+     * @param  string  $querystring
+     * @param  boolean $withQuestionmark
      * @return string
      */
     public function querystring($querystring = null, $withQuestionmark = true)
@@ -231,6 +299,10 @@ class Medium extends Data implements RenderableInterface
                 $attributes['alt'] = $alt;
             } elseif (!empty($this->items['alt'])) {
                 $attributes['alt'] = $this->items['alt'];
+            } elseif (!empty($this->items['alt_text'])) {
+                $attributes['alt'] = $this->items['alt_text'];
+            } else {
+                $attributes['alt'] = '';
             }
         }
 
@@ -334,7 +406,23 @@ class Medium extends Data implements RenderableInterface
 
         $this->mode = $mode;
 
-        return $mode === 'thumbnail' ? $this->getThumbnail()->reset() : $this->reset();
+        return $mode === 'thumbnail' ? ($this->getThumbnail() ? $this->getThumbnail()->reset() : null) : $this->reset();
+    }
+
+    /**
+     * Helper method to determine if this media item has a thumbnail or not
+     *
+     * @param string $type;
+     *
+     * @return bool
+     */
+    public function thumbnailExists($type = 'page')
+    {
+        $thumbs = $this->get('thumbnails');
+        if (isset($thumbs[$type])) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -358,6 +446,7 @@ class Medium extends Data implements RenderableInterface
 
         return $this;
     }
+
 
     /**
      * Turn the current Medium into a Link
@@ -457,7 +546,12 @@ class Medium extends Data implements RenderableInterface
     {
         $qs = $method;
         if (count($args) > 1 || (count($args) == 1 && !empty($args[0]))) {
-            $qs .= '=' . implode(',', array_map(function ($a) { return urlencode($a); }, $args));
+            $qs .= '=' . implode(',', array_map(function ($a) {
+                if (is_array($a)) {
+                    $a = '[' . implode(',', $a) . ']';
+                }
+                return rawurlencode($a);
+            }, $args));
         }
 
         if (!empty($qs)) {

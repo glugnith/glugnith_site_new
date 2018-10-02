@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.Page
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -11,13 +11,14 @@ namespace Grav\Common\Page\Medium;
 use Grav\Common\Data\Blueprint;
 use Grav\Common\Grav;
 use Grav\Common\Utils;
+use RocketTheme\Toolbox\ResourceLocator\UniformResourceLocator;
 
 class ImageMedium extends Medium
 {
     /**
      * @var array
      */
-    protected $thumbnailTypes = [ 'page', 'media', 'default' ];
+    protected $thumbnailTypes = ['page', 'media', 'default'];
 
     /**
      * @var ImageFile
@@ -51,24 +52,19 @@ class ImageMedium extends Medium
         'resize', 'forceResize', 'cropResize', 'crop', 'zoomCrop',
         'negate', 'brightness', 'contrast', 'grayscale', 'emboss',
         'smooth', 'sharp', 'edge', 'colorize', 'sepia', 'enableProgressive',
-        'rotate', 'flip', 'fixOrientation'
+        'rotate', 'flip', 'fixOrientation', 'gaussianBlur'
     ];
 
     /**
      * @var array
      */
     public static $magic_resize_actions = [
-        'resize' => [ 0, 1 ],
-        'forceResize' => [ 0, 1 ],
-        'cropResize' => [ 0, 1 ],
-        'crop' => [ 0, 1, 2, 3 ],
-        'zoomCrop' => [ 0, 1 ]
+        'resize' => [0, 1],
+        'forceResize' => [0, 1],
+        'cropResize' => [0, 1],
+        'crop' => [0, 1, 2, 3],
+        'zoomCrop' => [0, 1]
     ];
-
-    /**
-     * @var array
-     */
-    protected $derivatives = [];
 
     /**
      * @var string
@@ -106,6 +102,18 @@ class ImageMedium extends Medium
         if ($config->get('system.images.cache_all', false)) {
             $this->cache();
         }
+    }
+
+    public function __destruct()
+    {
+        unset($this->image);
+    }
+
+    public function __clone()
+    {
+        $this->image = $this->image ? clone $this->image : null;
+
+        parent::__clone();
     }
 
     /**
@@ -157,21 +165,27 @@ class ImageMedium extends Medium
      */
     public function url($reset = true)
     {
-        $image_path = Grav::instance()['locator']->findResource('cache://images', true);
-        $image_dir = Grav::instance()['locator']->findResource('cache://images', false);
+        /** @var UniformResourceLocator $locator */
+        $locator = Grav::instance()['locator'];
+        $image_path = $locator->findResource('cache://images', true);
+        $image_dir = $locator->findResource('cache://images', false);
         $saved_image_path = $this->saveImage();
 
-        $output = preg_replace('|^' . preg_quote(GRAV_ROOT) . '|', '', $saved_image_path);
+        $output = preg_replace('|^' . preg_quote(GRAV_ROOT, '|') . '|', '', $saved_image_path);
+
+        if ($locator->isStream($output)) {
+            $output = $locator->findResource($output, false);
+        }
 
         if (Utils::startsWith($output, $image_path)) {
-            $output = '/' . $image_dir . preg_replace('|^' . preg_quote($image_path) . '|', '', $output);
+            $output = '/' . $image_dir . preg_replace('|^' . preg_quote($image_path, '|') . '|', '', $output);
         }
 
         if ($reset) {
             $this->reset();
         }
 
-        return Grav::instance()['base_url'] . $output . $this->querystring() . $this->urlHash();
+        return trim(Grav::instance()['base_url'] . '/' . ltrim($output . $this->querystring() . $this->urlHash(), '/'), '\\');
     }
 
     /**
@@ -197,66 +211,120 @@ class ImageMedium extends Medium
      */
     public function srcset($reset = true)
     {
-        if (empty($this->alternatives) && empty($this->derivatives)) {
+        if (empty($this->alternatives)) {
             if ($reset) {
                 $this->reset();
             }
+
             return '';
         }
 
-        if (!empty($this->derivatives)) {
-          asort($this->derivatives);
-
-          foreach ($this->derivatives as $url => $width) {
-              $srcset[] = $url . ' ' . $width . 'w';
-          }
-
-          $srcset[] = $this->url($reset) . ' ' . $this->get('width') . 'w';
+        $srcset = [];
+        foreach ($this->alternatives as $ratio => $medium) {
+            $srcset[] = $medium->url($reset) . ' ' . $medium->get('width') . 'w';
         }
-        else {
-          $srcset = [ $this->url($reset) . ' ' . $this->get('width') . 'w' ];
-          foreach ($this->alternatives as $ratio => $medium) {
-              $srcset[] = $medium->url($reset) . ' ' . $medium->get('width') . 'w';
-          }
-        }
+        $srcset[] = $this->url($reset) . ' ' . $this->get('width') . 'w';
 
         return implode(', ', $srcset);
     }
 
     /**
-     * Generate derivatives
+     * Allows the ability to override the Inmage's Pretty name stored in cache
      *
-     * @param  int $min_width
-     * @param  int $max_width
-     * @param  int $step
-     * @return $this
+     * @param $name
      */
-    public function derivatives($min_width, $max_width, $step = 200) {
-      $width = $min_width;
-
-      // Do not upscale images.
-      if ($max_width > $this->get('width')) {
-        $max_width = $this->get('width');
-      }
-
-      while ($width <= $max_width) {
-        $ratio = $width / $this->get('width');
-        $derivative = MediumFactory::scaledFromMedium($this, 1, $ratio);
-        if (is_array($derivative)) {
-          $this->addDerivative($derivative['file']);
+    public function setImagePrettyName($name)
+    {
+        $this->set('prettyname', $name);
+        if ($this->image) {
+            $this->image->setPrettyName($name);
         }
-        $width += $step;
-      }
-      return $this;
+    }
+
+    public function getImagePrettyName()
+    {
+        if ($this->get('prettyname')) {
+            return $this->get('prettyname');
+        }
+
+        $basename = $this->get('basename');
+        if (preg_match('/[a-z0-9]{40}-(.*)/', $basename, $matches)) {
+            $basename = $matches[1];
+        }
+        return $basename;
     }
 
     /**
-     * Add a derivative
+     * Generate alternative image widths, using either an array of integers, or
+     * a min width, a max width, and a step parameter to fill out the necessary
+     * widths. Existing image alternatives won't be overwritten.
      *
-     * @param  ImageMedium $image
+     * @param  int|int[] $min_width
+     * @param  int       [$max_width=2500]
+     * @param  int       [$step=200]
+     * @return $this
      */
-    public function addDerivative(ImageMedium $image) {
-      $this->derivatives[$image->url()] = $image->get('width');
+    public function derivatives($min_width, $max_width = 2500, $step = 200) {
+        if (!empty($this->alternatives)) {
+            $max = max(array_keys($this->alternatives));
+            $base = $this->alternatives[$max];
+        } else {
+            $base = $this;
+        }
+
+        $widths = [];
+
+        if (func_num_args() === 1) {
+            foreach ((array) func_get_arg(0) as $width) {
+                if ($width < $base->get('width')) {
+                    $widths[] = $width;
+                }
+            }
+        } else {
+            $max_width = min($max_width, $base->get('width'));
+
+            for ($width = $min_width; $width < $max_width; $width = $width + $step) {
+                $widths[] = $width;
+            }
+        }
+
+        foreach ($widths as $width) {
+            // Only generate image alternatives that don't already exist
+            if (array_key_exists((int) $width, $this->alternatives)) {
+                continue;
+            }
+
+            $derivative = MediumFactory::fromFile($base->get('filepath'));
+
+            // It's possible that MediumFactory::fromFile returns null if the
+            // original image file no longer exists and this class instance was
+            // retrieved from the page cache
+            if (null !== $derivative) {
+                $index = 2;
+                $alt_widths = array_keys($this->alternatives);
+                sort($alt_widths);
+
+                foreach ($alt_widths as $i => $key) {
+                    if ($width > $key) {
+                        $index += max($i, 1);
+                    }
+                }
+
+                $basename = preg_replace('/(@\d+x){0,1}$/', "@{$width}w", $base->get('basename'), 1);
+                $derivative->setImagePrettyName($basename);
+
+                $ratio = $base->get('width') / $width;
+                $height = $derivative->get('height') / $ratio;
+
+                $derivative->resize($width, $height);
+                $derivative->set('width', $width);
+                $derivative->set('height', $height);
+
+                $this->addAlternative($ratio, $derivative);
+            }
+        }
+
+        return $this;
     }
 
     /**
@@ -290,7 +358,6 @@ class ImageMedium extends Medium
 
         if ($this->image) {
             $this->image();
-            $this->image->clearOperations(); // Clear previously applied operations
             $this->querystring('');
             $this->filter();
             $this->clearAlternatives();
@@ -383,7 +450,7 @@ class ImageMedium extends Medium
      * Set or get sizes parameter for srcset media action
      *
      * @param  string $sizes
-     * @return $this
+     * @return string
      */
     public function sizes($sizes = null)
     {
@@ -410,7 +477,7 @@ class ImageMedium extends Medium
      */
     public function width($value = 'auto')
     {
-        if (!$value || $value == 'auto')
+        if (!$value || $value === 'auto')
             $this->attributes['width'] = $this->get('width');
         else
             $this->attributes['width'] = $value;
@@ -431,7 +498,7 @@ class ImageMedium extends Medium
      */
     public function height($value = 'auto')
     {
-        if (!$value || $value == 'auto')
+        if (!$value || $value === 'auto')
             $this->attributes['height'] = $this->get('height');
         else
             $this->attributes['height'] = $value;
@@ -447,11 +514,11 @@ class ImageMedium extends Medium
      */
     public function __call($method, $args)
     {
-        if ($method == 'cropZoom') {
+        if ($method === 'cropZoom') {
             $method = 'zoomCrop';
         }
 
-        if (!in_array($method, self::$magic_actions)) {
+        if (!\in_array($method, self::$magic_actions, true)) {
             return parent::__call($method, $args);
         }
 
@@ -463,7 +530,11 @@ class ImageMedium extends Medium
         try {
             call_user_func_array([$this->image, $method], $args);
 
-            foreach ($this->alternatives as $ratio => $medium) {
+            foreach ($this->alternatives as $medium) {
+                if (!$medium->image) {
+                    $medium->image();
+                }
+
                 $args_copy = $args;
 
                 // regular image: resize 400x400 -> 200x200
@@ -471,7 +542,7 @@ class ImageMedium extends Medium
                 if (isset(self::$magic_resize_actions[$method])) {
                     foreach (self::$magic_resize_actions[$method] as $param) {
                         if (isset($args_copy[$param])) {
-                            $args_copy[$param] = (int) $args_copy[$param] * $ratio;
+                            $args_copy[$param] *= $medium->get('ratio');
                         }
                     }
                 }
@@ -494,12 +565,17 @@ class ImageMedium extends Medium
         $locator = Grav::instance()['locator'];
 
         $file = $this->get('filepath');
-        $cacheDir = $locator->findResource('cache://images', true);
+
+        // Use existing cache folder or if it doesn't exist, create it.
+        $cacheDir = $locator->findResource('cache://images', true) ?: $locator->findResource('cache://images', true, true);
+
+        // Make sure we free previous image.
+        unset($this->image);
 
         $this->image = ImageFile::open($file)
             ->setCacheDir($cacheDir)
             ->setActualCacheDir($cacheDir)
-            ->setPrettyName(basename($this->get('basename')));
+            ->setPrettyName($this->getImagePrettyName());
 
         return $this;
     }
@@ -507,7 +583,7 @@ class ImageMedium extends Medium
     /**
      * Save the image with cache.
      *
-     * @return mixed|string
+     * @return string
      */
     protected function saveImage()
     {
@@ -521,7 +597,7 @@ class ImageMedium extends Medium
             return $this->result;
         }
 
-        if ($this->get('debug') && !$this->debug_watermarked) {
+        if (!$this->debug_watermarked && $this->get('debug')) {
             $ratio = $this->get('ratio');
             if (!$ratio) {
                 $ratio = 1;
@@ -568,9 +644,9 @@ class ImageMedium extends Medium
             }
 
             return $max;
-        } else {
-            return $this;
         }
+
+        return $this;
     }
 
 }

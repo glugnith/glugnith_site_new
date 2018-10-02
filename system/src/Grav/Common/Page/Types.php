@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.Page
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -82,8 +82,10 @@ class Types implements \ArrayAccess, \Iterator, \Countable
         }
 
         $modular_uri = rtrim($uri, '/') . '/modular';
-        foreach (Folder::all($modular_uri, $options) as $type) {
-            $this->register('modular/' . $type);
+        if (is_dir($modular_uri)) {
+            foreach (Folder::all($modular_uri, $options) as $type) {
+                $this->register('modular/' . $type);
+            }
         }
     }
 

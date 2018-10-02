@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.Language
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -22,6 +22,7 @@ class LanguageCodes
         'bn-BD'      => [ 'name' => 'Bengali (Bangladesh)',      'nativeName' => 'বাংলা (বাংলাদেশ)' ],
         'bn-IN'      => [ 'name' => 'Bengali (India)',           'nativeName' => 'বাংলা (ভারত)' ],
         'br'         => [ 'name' => 'Breton',                    'nativeName' => 'Brezhoneg' ],
+        'bs'         => [ 'name' => 'Bosnian',                   'nativeName' => 'Bosanski' ],
         'ca'         => [ 'name' => 'Catalan',                   'nativeName' => 'Català' ],
         'ca-valencia'=> [ 'name' => 'Catalan (Valencian)',       'nativeName' => 'Català (valencià)' ], // not iso-639-1. a=l10n-drivers
         'cs'         => [ 'name' => 'Czech',                     'nativeName' => 'Čeština' ],
@@ -52,6 +53,8 @@ class LanguageCodes
         'fi'         => [ 'name' => 'Finnish',                   'nativeName' => 'Suomi' ],
         'fj-FJ'      => [ 'name' => 'Fijian',                    'nativeName' => 'Vosa vaka-Viti' ],
         'fr'         => [ 'name' => 'French',                    'nativeName' => 'Français' ],
+        'fr-CA'      => [ 'name' => 'French (Canada)',           'nativeName' => 'Français (Canada)' ],
+        'fr-FR'      => [ 'name' => 'French (France)',           'nativeName' => 'Français (France)' ],
         'fur'        => [ 'name' => 'Friulian',                  'nativeName' => 'Furlan' ],
         'fur-IT'     => [ 'name' => 'Friulian',                  'nativeName' => 'Furlan' ],
         'fy'         => [ 'name' => 'Frisian',                   'nativeName' => 'Frysk' ],
@@ -155,14 +158,13 @@ class LanguageCodes
     {
         if (isset(static::$codes[$code])) {
             return static::get($code, 'nativeName');
-        } else {
-            if (preg_match('/[a-zA-Z]{2}-[a-zA-Z]{2}/', $code)) {
-                return static::get(substr($code, 0, 2), 'nativeName') . ' (' . substr($code, -2) . ')';
-            } else {
-                return $code;
-            }
-
         }
+
+        if (preg_match('/[a-zA-Z]{2}-[a-zA-Z]{2}/', $code)) {
+            return static::get(substr($code, 0, 2), 'nativeName') . ' (' . substr($code, -2) . ')';
+        }
+
+        return $code;
     }
 
     public static function getOrientation($code)
@@ -177,7 +179,7 @@ class LanguageCodes
 
     public static function isRtl($code)
     {
-        if (static::getOrientation($code) == 'rtl') {
+        if (static::getOrientation($code) === 'rtl') {
             return true;
         }
         return false;
@@ -190,7 +192,6 @@ class LanguageCodes
             if (isset(static::$codes[$key])) {
                 $results[$key] = static::$codes[$key];
             }
-
         }
         return $results;
     }
@@ -199,8 +200,8 @@ class LanguageCodes
     {
         if (isset(static::$codes[$code][$type])) {
             return static::$codes[$code][$type];
-        } else {
-            return false;
         }
+
+        return false;
     }
 }

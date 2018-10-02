@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -26,11 +26,11 @@ class Inflector
     {
         if (empty($this->plural)) {
             $language = Grav::instance()['language'];
-            $this->plural = $language->translate('INFLECTOR_PLURALS', null, true);
-            $this->singular = $language->translate('INFLECTOR_SINGULAR', null, true);
-            $this->uncountable = $language->translate('INFLECTOR_UNCOUNTABLE', null, true);
-            $this->irregular = $language->translate('INFLECTOR_IRREGULAR', null, true);
-            $this->ordinals = $language->translate('INFLECTOR_ORDINALS', null, true);
+            $this->plural = $language->translate('INFLECTOR_PLURALS', null, true) ?: [];
+            $this->singular = $language->translate('INFLECTOR_SINGULAR', null, true) ?: [];
+            $this->uncountable = $language->translate('INFLECTOR_UNCOUNTABLE', null, true) ?: [];
+            $this->irregular = $language->translate('INFLECTOR_IRREGULAR', null, true) ?: [];
+            $this->ordinals = $language->translate('INFLECTOR_ORDINALS', null, true) ?: [];
         }
     }
 
@@ -190,10 +190,11 @@ class Inflector
     public function hyphenize($word)
     {
         $regex1 = preg_replace('/([A-Z]+)([A-Z][a-z])/', '\1-\2', $word);
-        $regex2 = preg_replace('/([a-zd])([A-Z])/', '\1-\2', $regex1);
-        $regex3 = preg_replace('/[^A-Z^a-z^0-9]+/', '-', $regex2);
+        $regex2 = preg_replace('/([a-z])([A-Z])/', '\1-\2', $regex1);
+        $regex3 = preg_replace('/([0-9])([A-Z])/', '\1-\2', $regex2);
+        $regex4 = preg_replace('/[^A-Z^a-z^0-9]+/', '-', $regex3);
 
-        return strtolower($regex3);
+        return strtolower($regex4);
     }
 
     /**

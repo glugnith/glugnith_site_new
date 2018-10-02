@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Console
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -11,6 +11,7 @@ namespace Grav\Console\Gpm;
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\GPM\GPM;
 use Grav\Common\GPM\Installer;
+use Grav\Common\GPM\Licenses;
 use Grav\Common\GPM\Response;
 use Grav\Common\GPM\Remote\Package as Package;
 use Grav\Common\Grav;
@@ -19,7 +20,6 @@ use Grav\Console\ConsoleCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
-use Symfony\Component\Yaml\Yaml;
 
 define('GIT_REGEX', '/http[s]?:\/\/(?:.*@)?(github|bitbucket)(?:.org|.com)\/.*\/(.*)/');
 
@@ -80,7 +80,7 @@ class InstallCommand extends ConsoleCommand
             ->addArgument(
                 'package',
                 InputArgument::IS_ARRAY | InputArgument::REQUIRED,
-                'The package(s) that are desired to be installed. Use the "index" command for a list of packages'
+                'Package(s) to install. Use "bin/gpm index" to list packages. Use "bin/gpm direct-install" to install a specific version'
             )
             ->setDescription("Performs the installation of plugins and themes")
             ->setHelp('The <info>install</info> command allows to install plugins and themes');
@@ -97,7 +97,7 @@ class InstallCommand extends ConsoleCommand
     }
 
     /**
-     * @return int|null|void|bool
+     * @return bool
      */
     protected function serve()
     {
@@ -111,13 +111,7 @@ class InstallCommand extends ConsoleCommand
 
         $packages = array_map('strtolower', $this->input->getArgument('package'));
         $this->data = $this->gpm->findPackages($packages);
-
-        if (false === $this->isWindows() && @is_file(getenv("HOME") . '/.grav/config')) {
-            $local_config_file = exec('eval echo ~/.grav/config');
-            if (file_exists($local_config_file)) {
-                $this->local_config = Yaml::parse($local_config_file);
-            }
-        }
+        $this->loadLocalConfig();
 
         if (
             !Installer::isGravInstance($this->destination) ||
@@ -188,12 +182,12 @@ class InstallCommand extends ConsoleCommand
         //We're done installing dependencies. Install the actual packages
         foreach ($this->data as $data) {
             foreach ($data as $package_name => $package) {
-                if (in_array($package_name, array_keys($dependencies))) {
+                if (array_key_exists($package_name, $dependencies)) {
                     $this->output->writeln("<green>Package " . $package_name . " already installed as dependency</green>");
                 } else {
                     $is_valid_destination = Installer::isValidDestination($this->destination . DS . $package->install_path);
                     if ($is_valid_destination || Installer::lastErrorCode() == Installer::NOT_FOUND) {
-                        $this->processPackage($package, true, false);
+                        $this->processPackage($package, false);
                     } else {
                         if (Installer::lastErrorCode() == Installer::EXISTS) {
 
@@ -211,7 +205,7 @@ class InstallCommand extends ConsoleCommand
 
                             if ($answer) {
                                 $is_update = true;
-                                $this->processPackage($package, true, $is_update);
+                                $this->processPackage($package, $is_update);
                             } else {
                                 $this->output->writeln("<yellow>Package " . $package_name . " not overwritten</yellow>");
                             }
@@ -317,7 +311,7 @@ class InstallCommand extends ConsoleCommand
             if ($answer) {
                 foreach ($packages as $dependencyName => $dependencyVersion) {
                     $package = $this->gpm->findPackage($dependencyName);
-                    $this->processPackage($package, true, ($type == 'update') ? true : false);
+                    $this->processPackage($package, ($type == 'update') ? true : false);
                 }
                 $this->output->writeln('');
             } else {
@@ -426,7 +420,7 @@ class InstallCommand extends ConsoleCommand
     /**
      * @param $package
      *
-     * @return array
+     * @return array|bool
      */
     private function getGitRegexMatches($package)
     {
@@ -450,18 +444,21 @@ class InstallCommand extends ConsoleCommand
     {
         $matches = $this->getGitRegexMatches($package);
 
-        foreach ($this->local_config as $path) {
+        foreach ($this->local_config as $paths) {
             if (Utils::endsWith($matches[2], '.git')) {
                 $repo_dir = preg_replace('/\.git$/', '', $matches[2]);
             } else {
                 $repo_dir = $matches[2];
             }
-
-            $from = rtrim($path, '/') . '/' . $repo_dir;
-
-            if (file_exists($from)) {
-                return $from;
+            
+            $paths = (array) $paths;
+            foreach ($paths as $repo) {
+                $path = rtrim($repo, '/') . '/' . $repo_dir;
+                if (file_exists($path)) {
+                    return $path;
+                }
             }
+
         }
 
         return false;
@@ -513,15 +510,26 @@ class InstallCommand extends ConsoleCommand
 
     /**
      * @param      $package
+     * @param bool $is_update
+     *
+     * @return bool
      */
     private function processGpm($package, $is_update = false)
     {
         $version = isset($package->available) ? $package->available : $package->version;
+        $license = Licenses::get($package->slug);
 
         $this->output->writeln("Preparing to install <cyan>" . $package->name . "</cyan> [v" . $version . "]");
 
         $this->output->write("  |- Downloading package...     0%");
-        $this->file = $this->downloadPackage($package);
+        $this->file = $this->downloadPackage($package, $license);
+
+        if (!$this->file) {
+            $this->output->writeln("  '- <red>Installation failed or aborted.</red>");
+            $this->output->writeln('');
+
+            return false;
+        }
 
         $this->output->write("  |- Checking destination...  ");
         $checks = $this->checkDestination($package);
@@ -538,21 +546,53 @@ class InstallCommand extends ConsoleCommand
             } else {
                 $this->output->writeln("  '- <green>Success!</green>  ");
                 $this->output->writeln('');
+
+                return true;
             }
         }
+
+        return false;
     }
 
     /**
      * @param Package $package
      *
+     * @param string    $license
+     *
      * @return string
      */
-    private function downloadPackage($package)
+    private function downloadPackage($package, $license = null)
     {
         $tmp_dir = Grav::instance()['locator']->findResource('tmp://', true, true);
         $this->tmp = $tmp_dir . '/Grav-' . uniqid();
         $filename = $package->slug . basename($package->zipball_url);
-        $output = Response::get($package->zipball_url, [], [$this, 'progress']);
+        $filename = preg_replace('/[\\\\\/:"*?&<>|]+/mi', '-', $filename);
+        $query = '';
+
+        if ($package->premium) {
+            $query = \json_encode(array_merge(
+                $package->premium,
+                [
+                    'slug' => $package->slug,
+                    'filename' => $package->premium['filename'],
+                    'license_key' => $license
+                ]
+            ));
+
+            $query = '?d=' . base64_encode($query);
+        }
+
+        try {
+            $output = Response::get($package->zipball_url . $query, [], [$this, 'progress']);
+        } catch (\Exception $e) {
+            $error = str_replace("\n", "\n  |  '- ", $e->getMessage());
+            $this->output->write("\x0D");
+            // extra white spaces to clear out the buffer properly
+            $this->output->writeln("  |- Downloading package...    <red>error</red>                             ");
+            $this->output->writeln("  |  '- " . $error);
+
+            return false;
+        }
 
         Folder::mkdir($this->tmp);
 

@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Console
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -11,6 +11,7 @@ namespace Grav\Console\Gpm;
 use Grav\Common\GPM\GPM;
 use Grav\Common\GPM\Installer;
 use Grav\Console\ConsoleCommand;
+use Grav\Common\GPM\Upgrader;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
@@ -50,6 +51,11 @@ class UpdateCommand extends ConsoleCommand
     protected $all_yes;
 
     protected $overwrite;
+
+    /**
+     * @var Upgrader
+     */
+    protected $upgrader;
 
     /**
      *
@@ -109,6 +115,22 @@ class UpdateCommand extends ConsoleCommand
      */
     protected function serve()
     {
+        $this->upgrader = new Upgrader($this->input->getOption('force'));
+        $local = $this->upgrader->getLocalVersion();
+        $remote = $this->upgrader->getRemoteVersion();
+        if ($local !== $remote) {
+            $this->output->writeln("<yellow>WARNING</yellow>: A new version of Grav is available. You should update Grav before updating plugins and themes. If you continue without updating Grav, some plugins or themes may stop working.");
+            $this->output->writeln("");
+            $questionHelper = $this->getHelper('question');
+            $question = new ConfirmationQuestion("Continue with the update process? [Y|n] ", true);
+            $answer = $questionHelper->ask($this->input, $this->output, $question);
+
+            if (!$answer) {
+                $this->output->writeln("<red>Update aborted. Exiting...</red>");
+                exit;
+            }
+        }
+
         $this->gpm = new GPM($this->input->getOption('force'));
 
         $this->all_yes = $this->input->getOption('all-yes');
@@ -160,7 +182,7 @@ class UpdateCommand extends ConsoleCommand
         $index = 0;
         foreach ($this->data as $packages) {
             foreach ($packages as $slug => $package) {
-                if (count($limit_to) && !array_key_exists($slug, $limit_to)) {
+                if (count($only_packages) && !array_key_exists($slug, $limit_to)) {
                     continue;
                 }
 
@@ -254,6 +276,7 @@ class UpdateCommand extends ConsoleCommand
                 $this->output->writeln('');
                 $this->output->writeln("Packages not found or not requiring updates: <red>" . implode('</red>, <red>',
                         $ignore) . "</red>");
+
             }
         }
 
