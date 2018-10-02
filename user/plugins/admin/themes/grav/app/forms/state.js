@@ -12,7 +12,7 @@ const DOMBehaviors = {
     },
 
     preventUnload() {
-        let selector = '[name="task"][value="save"], [name="task"][value="saveas"], [data-delete-action]';
+        let selector = '[name="task"][value^="save"], [data-delete-action]';
         if ($._data(window, 'events') && ($._data(window, 'events').beforeunload || []).filter((event) => event.namespace === '_grav').length) {
             return;
         }
@@ -100,6 +100,10 @@ export default class FormState {
             let type = field.prop('type');
             let tag = field.prop('tagName').toLowerCase();
             let value;
+
+            if (name.startsWith('toggleable_') || name === 'data[lang]' || name === 'data[redirect]') {
+                return;
+            }
 
             switch (type) {
                 case 'checkbox':

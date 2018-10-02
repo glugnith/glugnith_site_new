@@ -2,16 +2,16 @@
 /**
  * @package    Grav.Common.Data
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\Data;
 
 use Grav\Common\Grav;
-use Symfony\Component\Yaml\Exception\ParseException;
-use Symfony\Component\Yaml\Parser;
-use Symfony\Component\Yaml\Yaml;
+use Grav\Common\Utils;
+use Grav\Common\Yaml;
+use RocketTheme\Toolbox\Compat\Yaml\Yaml as FallbackYaml;
 
 class Validation
 {
@@ -27,9 +27,12 @@ class Validation
         $messages = [];
 
         $validate = isset($field['validate']) ? (array) $field['validate'] : [];
+        // Validate type with fallback type text.
+        $type = (string) isset($validate['type']) ? $validate['type'] : $field['type'];
+        $method = 'type'.strtr($type, '-', '_');
 
         // If value isn't required, we will stop validation if empty value is given.
-        if (empty($validate['required']) && ($value === null || $value === '')) {
+        if ((empty($validate['required']) || (isset($validate['required']) && $validate['required'] !== true)) && ($value === null || $value === '' || (($field['type'] === 'checkbox' || $field['type'] === 'switch') && $value == false))) {
             return $messages;
         }
 
@@ -40,14 +43,16 @@ class Validation
         // Get language class.
         $language = Grav::instance()['language'];
 
-        // Validate type with fallback type text.
-        $type = (string) isset($field['validate']['type']) ? $field['validate']['type'] : $field['type'];
-        $method = 'type'.strtr($type, '-', '_');
-
         $name = ucfirst(isset($field['label']) ? $field['label'] : $field['name']);
         $message = (string) isset($field['validate']['message'])
             ? $language->translate($field['validate']['message'])
             : $language->translate('FORM.INVALID_INPUT', null, true) . ' "' . $language->translate($name) . '"';
+
+
+        // If this is a YAML field validate/filter as such
+        if ($type != 'yaml' && isset($field['yaml']) && $field['yaml'] === true) {
+            $method = 'typeYaml';
+        }
 
         if (method_exists(__CLASS__, $method)) {
             $success = self::$method($value, $validate, $field);
@@ -95,20 +100,15 @@ class Validation
             $field['type'] = 'text';
         }
 
-        // If this is a YAML field, simply parse it and return the value.
-        if (isset($field['yaml']) && $field['yaml'] === true) {
-            try {
-                $yaml = new Parser();
-
-                return $yaml->parse($value);
-            } catch (ParseException $e) {
-                throw new \RuntimeException($e->getMessage());
-            }
-        }
 
         // Validate type with fallback type text.
         $type = (string) isset($field['validate']['type']) ? $field['validate']['type'] : $field['type'];
         $method = 'filter' . ucfirst(strtr($type, '-', '_'));
+
+        // If this is a YAML field validate/filter as such
+        if ($type !== 'yaml' && isset($field['yaml']) && $field['yaml'] === true) {
+            $method = 'filterYaml';
+        }
 
         if (!method_exists(__CLASS__, $method)) {
             $method = 'filterText';
@@ -127,9 +127,11 @@ class Validation
      */
     public static function typeText($value, array $params, array $field)
     {
-        if (!is_string($value)) {
+        if (!is_string($value) && !is_numeric($value)) {
             return false;
         }
+
+        $value = (string)$value;
 
         if (isset($params['min']) && strlen($value) < $params['min']) {
             return false;
@@ -161,10 +163,21 @@ class Validation
         return is_array($value) ? $value : preg_split('/\s*,\s*/', $value, -1, PREG_SPLIT_NO_EMPTY);
     }
 
-    protected static function typeCommaList($value, array $params, array $field)
+    public static function typeCommaList($value, array $params, array $field)
     {
         return is_array($value) ? true : self::typeText($value, $params, $field);
     }
+
+    protected static function filterLower($value, array $params)
+    {
+        return strtolower($value);
+    }
+
+    protected static function filterUpper($value, array $params)
+    {
+        return strtoupper($value);
+    }
+
 
     /**
      * HTML5 input: textarea
@@ -219,6 +232,8 @@ class Validation
      */
     public static function typeCheckboxes($value, array $params, array $field)
     {
+        // Set multiple: true so checkboxes can easily use min/max counts to control number of options required
+        $field['multiple'] = true;
         return self::typeArray((array) $value, $params, $field);
     }
 
@@ -242,7 +257,7 @@ class Validation
         if (!isset($field['value'])) {
             $field['value'] = 1;
         }
-        if ($value && $value != $field['value']) {
+        if (isset($value) && $value != $field['value']) {
             return false;
         }
 
@@ -338,7 +353,7 @@ class Validation
 
     protected static function filterNumber($value, array $params, array $field)
     {
-        return (int) $value;
+        return (string)(int)$value !== (string)(float)$value ? (float) $value : (int) $value;
     }
 
     protected static function filterDateTime($value, array $params, array $field)
@@ -569,6 +584,7 @@ class Validation
             return null;
         }
 
+
         if ($options) {
             $useKey = isset($field['use']) && $field['use'] == 'keys';
             foreach ($values as $key => $value) {
@@ -580,9 +596,22 @@ class Validation
             foreach ($values as $key => $value) {
                 if (is_array($value)) {
                     $value = implode(',', $value);
+                    $values[$key] =  array_map('trim', explode(',', $value));
+                } else {
+                    $values[$key] =  trim($value);
+                }
+            }
+        }
+
+        if (isset($field['ignore_empty']) && Utils::isPositive($field['ignore_empty'])) {
+            foreach ($values as $key => $value) {
+                foreach ($value as $inner_key => $inner_value) {
+                    if ($inner_value == '') {
+                        unset($value[$inner_key]);
+                    }
                 }
 
-                $values[$key] =  array_map('trim', explode(',', $value));
+                $values[$key] = $value;
             }
         }
 
@@ -613,23 +642,14 @@ class Validation
         return (array) $value;
     }
 
-    public static function typeYaml($value, $params)
-    {
-        try {
-            Yaml::parse($value);
-            return true;
-        } catch (ParseException $e) {
-            return false;
-        }
-    }
-
     public static function filterYaml($value, $params)
     {
-        try {
-            return (array) Yaml::parse($value);
-        } catch (ParseException $e) {
-            return null;
+        if (!is_string($value)) {
+            return $value;
         }
+
+        return (array) Yaml::parse($value);
+
     }
 
     /**
@@ -649,6 +669,7 @@ class Validation
     {
         return $value;
     }
+
 
     // HTML5 attributes (min, max and range are handled inside the types)
 
@@ -730,6 +751,11 @@ class Validation
         || ($value instanceof \ArrayAccess
             && $value instanceof \Traversable
             && $value instanceof \Countable);
+    }
+
+    public static function filterItem_List($value, $params)
+    {
+        return array_values(array_filter($value, function($v) { return !empty($v); } ));
     }
 
     public static function validateJson($value, $params)

@@ -2,17 +2,18 @@
 /**
  * @package    Grav.Common.GPM
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\GPM;
 
 use Grav\Common\Grav;
+use Grav\Common\Filesystem\Folder;
 use Grav\Common\Inflector;
 use Grav\Common\Iterator;
 use Grav\Common\Utils;
-use Symfony\Component\Yaml\Yaml;
+use RocketTheme\Toolbox\File\YamlFile;
 
 class GPM extends Iterator
 {
@@ -74,7 +75,7 @@ class GPM extends Iterator
      * Returns the Locally installable packages
      *
      * @param array $list_type_installed
-     * @return Iterator The installed packages
+     * @return array The installed packages
      */
     public function getInstallable($list_type_installed = ['plugins' => true, 'themes' => true])
     {
@@ -117,6 +118,8 @@ class GPM extends Iterator
         if (isset($this->installed['themes'][$slug])) {
             return $this->installed['themes'][$slug];
         }
+
+        return null;
     }
 
     /**
@@ -199,7 +202,7 @@ class GPM extends Iterator
     /**
      * Returns an array of Plugins and Themes that can be updated.
      * Plugins and Themes are extended with the `available` property that relies to the remote version
-     * @param $list_type_update specifies what type of package to update
+     * @param array $list_type_update specifies what type of package to update
      * @return array Array of updatable Plugins and Themes.
      *               Format: ['total' => int, 'plugins' => array, 'themes' => array]
      */
@@ -222,7 +225,7 @@ class GPM extends Iterator
     /**
      * Returns an array of Plugins that can be updated.
      * The Plugins are extended with the `available` property that relies to the remote version
-     * @return Iterator Array of updatable Plugins
+     * @return array Array of updatable Plugins
      */
     public function getUpdatablePlugins()
     {
@@ -302,7 +305,7 @@ class GPM extends Iterator
     /**
      * Returns an array of Themes that can be updated.
      * The Themes are extended with the `available` property that relies to the remote version
-     * @return Iterator Array of updatable Themes
+     * @return array Array of updatable Themes
      */
     public function getUpdatableThemes()
     {
@@ -435,7 +438,7 @@ class GPM extends Iterator
 
     /**
      * Returns the list of Plugins and Themes available in the repository
-     * @return array Array of available Plugins and Themes
+     * @return Remote\Packages Available Plugins and Themes
      *               Format: ['plugins' => array, 'themes' => array]
      */
     public function getRepository()
@@ -446,9 +449,10 @@ class GPM extends Iterator
     /**
      * Searches for a Package in the repository
      * @param  string $search Can be either the slug or the name
-     * @return Remote\Package Package if found, FALSE if not
+     * @param  bool $ignore_exception True if should not fire an exception (for use in Twig)
+     * @return Remote\Package|bool Package if found, FALSE if not
      */
-    public function findPackage($search)
+    public function findPackage($search, $ignore_exception = false)
     {
         $search = strtolower($search);
 
@@ -468,6 +472,10 @@ class GPM extends Iterator
         if (!$themes && !$plugins) {
             if (!is_writable(ROOT_DIR . '/cache/gpm')) {
                 throw new \RuntimeException("The cache/gpm folder is not writable. Please check the folder permissions.");
+            }
+
+            if ($ignore_exception) {
+                return false;
             }
 
             throw new \RuntimeException("GPM not reachable. Please check your internet connection or check the Grav site is reachable");
@@ -490,6 +498,156 @@ class GPM extends Iterator
         }
 
         return false;
+    }
+
+    /**
+     * Download the zip package via the URL
+     *
+     * @param $package_file
+     * @param $tmp
+     * @return null|string
+     */
+    public static function downloadPackage($package_file, $tmp)
+    {
+        $package = parse_url($package_file);
+        $filename = basename($package['path']);
+
+        if (Grav::instance()['config']->get('system.gpm.official_gpm_only') && $package['host'] !== 'getgrav.org') {
+            throw new \RuntimeException("Only official GPM URLs are allowed. You can modify this behavior in the System configuration.");
+        }
+
+        $output = Response::get($package_file, []);
+
+        if ($output) {
+            Folder::mkdir($tmp);
+            file_put_contents($tmp . DS . $filename, $output);
+            return $tmp . DS . $filename;
+        }
+
+        return null;
+    }
+
+    /**
+     * Copy the local zip package to tmp
+     *
+     * @param $package_file
+     * @param $tmp
+     * @return null|string
+     */
+    public static function copyPackage($package_file, $tmp)
+    {
+        $package_file = realpath($package_file);
+
+        if (file_exists($package_file)) {
+            $filename = basename($package_file);
+            Folder::mkdir($tmp);
+            copy(realpath($package_file), $tmp . DS . $filename);
+            return $tmp . DS . $filename;
+        }
+
+        return null;
+    }
+
+    /**
+     * Try to guess the package type from the source files
+     *
+     * @param $source
+     * @return bool|string
+     */
+    public static function getPackageType($source)
+    {
+        $plugin_regex = '/^class\\s{1,}[a-zA-Z0-9]{1,}\\s{1,}extends.+Plugin/m';
+        $theme_regex = '/^class\\s{1,}[a-zA-Z0-9]{1,}\\s{1,}extends.+Theme/m';
+
+        if (
+            file_exists($source . 'system/defines.php') &&
+            file_exists($source . 'system/config/system.yaml')
+        ) {
+            return 'grav';
+        } else {
+            // must have a blueprint
+            if (!file_exists($source . 'blueprints.yaml')) {
+                return false;
+            }
+
+            // either theme or plugin
+            $name = basename($source);
+            if (Utils::contains($name, 'theme')) {
+                return 'theme';
+            } elseif (Utils::contains($name, 'plugin')) {
+                return 'plugin';
+            }
+            foreach (glob($source . "*.php") as $filename) {
+                $contents = file_get_contents($filename);
+                if (preg_match($theme_regex, $contents)) {
+                    return 'theme';
+                } elseif (preg_match($plugin_regex, $contents)) {
+                    return 'plugin';
+                }
+            }
+
+            // Assume it's a theme
+            return 'theme';
+        }
+    }
+
+    /**
+     * Try to guess the package name from the source files
+     *
+     * @param $source
+     * @return bool|string
+     */
+    public static function getPackageName($source)
+    {
+        $ignore_yaml_files = ['blueprints', 'languages'];
+
+        foreach (glob($source . "*.yaml") as $filename) {
+            $name = strtolower(basename($filename, '.yaml'));
+            if (in_array($name, $ignore_yaml_files)) {
+                continue;
+            }
+            return $name;
+        }
+        return false;
+    }
+
+    /**
+     * Find/Parse the blueprint file
+     *
+     * @param $source
+     * @return array|bool
+     */
+    public static function getBlueprints($source)
+    {
+        $blueprint_file = $source . 'blueprints.yaml';
+        if (!file_exists($blueprint_file)) {
+            return false;
+        }
+
+        $file = YamlFile::instance($blueprint_file);
+        $blueprint = (array)$file->content();
+        $file->free();
+
+        return $blueprint;
+    }
+
+    /**
+     * Get the install path for a name and a particular type of package
+     *
+     * @param $type
+     * @param $name
+     * @return string
+     */
+    public static function getInstallPath($type, $name)
+    {
+        $locator = Grav::instance()['locator'];
+
+        if ($type == 'theme') {
+            $install_path = $locator->findResource('themes://', false) . DS . $name;
+        } else {
+            $install_path = $locator->findResource('plugins://', false) . DS . $name;
+        }
+        return $install_path;
     }
 
     /**
@@ -564,8 +722,8 @@ class GPM extends Iterator
         foreach ($packages as $package_name => $package) {
             if (isset($package['dependencies'])) {
                 foreach ($package['dependencies'] as $dependency) {
-                    if (is_array($dependency)) {
-                        $dependency = array_keys($dependency)[0];
+                    if (is_array($dependency) && isset($dependency['name'])) {
+                        $dependency = $dependency['name'];
                     }
 
                     if ($dependency == $slug) {
@@ -595,6 +753,8 @@ class GPM extends Iterator
                 return $dependency[$dependency_slug];
             }
         }
+
+        return null;
     }
 
     /**
@@ -678,6 +838,20 @@ class GPM extends Iterator
                 continue;
             }
 
+            // Check PHP version
+            if ($dependency_slug == 'php') {
+                $current_php_version = phpversion();
+                if (version_compare($this->calculateVersionNumberFromDependencyVersion($dependencyVersionWithOperator),
+                        $current_php_version) === 1
+                ) {
+                    //Needs a Grav update first
+                    throw new \Exception("<red>One of the packages require PHP " . $dependencies['php'] . ". Please update PHP to resolve this");
+                } else {
+                    unset($dependencies[$dependency_slug]);
+                    continue;
+                }
+            }
+
             //First, check for Grav dependency. If a dependency requires Grav > the current version, abort and tell.
             if ($dependency_slug == 'grav') {
                 if (version_compare($this->calculateVersionNumberFromDependencyVersion($dependencyVersionWithOperator),
@@ -702,7 +876,9 @@ class GPM extends Iterator
                 // get currently installed version
                 $locator = Grav::instance()['locator'];
                 $blueprints_path = $locator->findResource('plugins://' . $dependency_slug . DS . 'blueprints.yaml');
-                $package_yaml = Yaml::parse(file_get_contents($blueprints_path));
+                $file = YamlFile::instance($blueprints_path);
+                $package_yaml = $file->content();
+                $file->free();
                 $currentlyInstalledVersion = $package_yaml['version'];
 
                 // if requirement is next significant release, check is compatible with currently installed version, might not be
@@ -905,9 +1081,9 @@ class GPM extends Iterator
         } elseif ($version == '') {
             return null;
         } elseif ($this->versionFormatIsNextSignificantRelease($version)) {
-            return substr($version, 1);
+            return trim(substr($version, 1));
         } elseif ($this->versionFormatIsEqualOrHigher($version)) {
-            return substr($version, 2);
+            return trim(substr($version, 2));
         } else {
             return $version;
         }

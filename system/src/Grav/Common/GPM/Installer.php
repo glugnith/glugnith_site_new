@@ -2,7 +2,7 @@
 /**
  * @package    Grav.Common.GPM
  *
- * @copyright  Copyright (C) 2014 - 2016 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2015 - 2018 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -29,6 +29,8 @@ class Installer
     const ZIP_OPEN_ERROR = 32;
     /** @const Error while trying to extract the ZIP package */
     const ZIP_EXTRACT_ERROR = 64;
+    /** @const Invalid source file */
+    const INVALID_SOURCE = 128;
 
     /**
      * Destination folder on which validation checks are applied
@@ -40,6 +42,11 @@ class Installer
      * @var integer Error Code
      */
     protected static $error = 0;
+
+    /**
+     * @var integer Zip Error Code
+     */
+    protected static $error_zip = 0;
 
     /**
      * @var string Post install message
@@ -56,19 +63,20 @@ class Installer
         'sophisticated'   => false,
         'theme'           => false,
         'install_path'    => '',
+        'ignores'         => [],
         'exclude_checks'  => [self::EXISTS, self::NOT_FOUND, self::IS_LINK]
     ];
 
     /**
      * Installs a given package to a given destination.
      *
-     * @param  string $package     The local path to the ZIP package
+     * @param  string $zip the local path to ZIP package
      * @param  string $destination The local path to the Grav Instance
-     * @param  array  $options     Options to use for installing. ie, ['install_path' => 'user/themes/antimatter']
-     *
-     * @return boolean True if everything went fine, False otherwise.
+     * @param  array $options Options to use for installing. ie, ['install_path' => 'user/themes/antimatter']
+     * @param  string $extracted The local path to the extacted ZIP package
+     * @return bool True if everything went fine, False otherwise.
      */
-    public static function install($package, $destination, $options = [])
+    public static function install($zip, $destination, $options = [], $extracted = null)
     {
         $destination = rtrim($destination, DS);
         $options = array_merge(self::$options, $options);
@@ -86,34 +94,26 @@ class Installer
             return false;
         }
 
-        $zip = new \ZipArchive();
-        $archive = $zip->open($package);
+        // Create a tmp location
         $tmp_dir = Grav::instance()['locator']->findResource('tmp://', true, true);
         $tmp = $tmp_dir . '/Grav-' . uniqid();
 
-        if ($archive !== true) {
-            self::$error = self::ZIP_OPEN_ERROR;
+        if (!$extracted) {
+            $extracted = self::unZip($zip, $tmp);
+            if (!$extracted) {
+                Folder::delete($tmp);
+                return false;
+            }
+        }
 
+        if (!file_exists($extracted)) {
+            self::$error = self::INVALID_SOURCE;
             return false;
         }
 
-        Folder::mkdir($tmp);
-
-        $unzip = $zip->extractTo($tmp);
-
-        if (!$unzip) {
-            self::$error = self::ZIP_EXTRACT_ERROR;
-            $zip->close();
-            Folder::delete($tmp);
-
-            return false;
-        }
-
-        $package_folder_name = $zip->getNameIndex(0);
-        $installer_file_folder = $tmp . '/' . $package_folder_name;
 
         $is_install = true;
-        $installer = self::loadInstaller($installer_file_folder, $is_install);
+        $installer = self::loadInstaller($extracted, $is_install);
 
         if (isset($options['is_update']) && $options['is_update'] === true) {
             $method = 'preUpdate';
@@ -135,16 +135,15 @@ class Installer
 
         if (!$options['sophisticated']) {
             if ($options['theme']) {
-                self::copyInstall($zip, $install_path, $tmp);
+                self::copyInstall($extracted, $install_path);
             } else {
-                self::moveInstall($zip, $install_path, $tmp);
+                self::moveInstall($extracted, $install_path);
             }
         } else {
-            self::sophisticatedInstall($zip, $install_path, $tmp);
+            self::sophisticatedInstall($extracted, $install_path, $options['ignores']);
         }
 
         Folder::delete($tmp);
-        $zip->close();
 
         if (isset($options['is_update']) && $options['is_update'] === true) {
             $method = 'postUpdate';
@@ -161,6 +160,43 @@ class Installer
 
         return true;
 
+    }
+
+    /**
+     * Unzip a file to somewhere
+     *
+     * @param $zip_file
+     * @param $destination
+     * @return bool|string
+     */
+    public static function unZip($zip_file, $destination)
+    {
+        $zip = new \ZipArchive();
+        $archive = $zip->open($zip_file);
+
+        if ($archive === true) {
+            Folder::mkdir($destination);
+
+            $unzip = $zip->extractTo($destination);
+
+
+            if (!$unzip) {
+                self::$error = self::ZIP_EXTRACT_ERROR;
+                Folder::delete($destination);
+                $zip->close();
+                return false;
+            }
+
+            $package_folder_name = preg_replace('#\./$#', '', $zip->getNameIndex(0));
+            $zip->close();
+            $extracted_folder = $destination . '/' . $package_folder_name;
+
+            return $extracted_folder;
+        }
+
+        self::$error = self::ZIP_EXTRACT_ERROR;
+        self::$error_zip = $archive;
+        return false;
     }
 
     /**
@@ -207,84 +243,77 @@ class Installer
             return $class_name;
         }
 
+        $class_name_alphanumeric = preg_replace('/[^a-zA-Z0-9]+/', '', $class_name);
+
+        if (class_exists($class_name_alphanumeric)) {
+            return $class_name_alphanumeric;
+        }
+
         return $installer;
     }
 
     /**
-     * @param \ZipArchive $zip
+     * @param             $source_path
      * @param             $install_path
-     * @param             $tmp
      *
      * @return bool
      */
-    public static function moveInstall(\ZipArchive $zip, $install_path, $tmp)
+    public static function moveInstall($source_path, $install_path)
     {
-        $container = $zip->getNameIndex(0);
         if (file_exists($install_path)) {
             Folder::delete($install_path);
         }
 
-        Folder::move($tmp . DS . $container, $install_path);
+        Folder::move($source_path, $install_path);
 
         return true;
     }
 
     /**
-     * @param \ZipArchive $zip
+     * @param             $source_path
      * @param             $install_path
-     * @param             $tmp
      *
      * @return bool
      */
-    public static function copyInstall(\ZipArchive $zip, $install_path, $tmp)
+    public static function copyInstall($source_path, $install_path)
     {
-        $firstDir = $zip->getNameIndex(0);
-        if (empty($firstDir)) {
-            throw new \RuntimeException("Directory $firstDir is missing");
+        if (empty($source_path)) {
+            throw new \RuntimeException("Directory $source_path is missing");
         } else {
-            $tmp = realpath($tmp . DS . $firstDir);
-            Folder::rcopy($tmp, $install_path);
+            Folder::rcopy($source_path, $install_path);
         }
 
         return true;
     }
 
     /**
-     * @param \ZipArchive $zip
+     * @param             $source_path
      * @param             $install_path
-     * @param             $tmp
      *
      * @return bool
      */
-    public static function sophisticatedInstall(\ZipArchive $zip, $install_path, $tmp)
+    public static function sophisticatedInstall($source_path, $install_path, $ignores = [])
     {
-        for ($i = 0, $l = $zip->numFiles; $i < $l; $i++) {
-            $filename = $zip->getNameIndex($i);
-            $fileinfo = pathinfo($filename);
-            $depth = count(explode(DS, rtrim($filename, '/')));
+        foreach (new \DirectoryIterator($source_path) as $file) {
 
-            if ($depth > 2) {
+            if ($file->isLink() || $file->isDot() || in_array($file->getFilename(), $ignores)) {
                 continue;
             }
 
-            $path = $install_path . DS . $fileinfo['basename'];
+            $path = $install_path . DS . $file->getFilename();
 
-            if (is_link($path)) {
-                continue;
-            } else {
-                if (is_dir($path)) {
-                    Folder::delete($path);
-                    Folder::move($tmp . DS . $filename, $path);
+            if ($file->isDir()) {
+                Folder::delete($path);
+                Folder::move($file->getPathname(), $path);
 
-                    if ($fileinfo['basename'] == 'bin') {
-                        foreach (glob($path . DS . '*') as $file) {
-                            @chmod($file, 0755);
-                        }
+                if ($file->getFilename() === 'bin') {
+                    foreach (glob($path . DS . '*') as $bin_file) {
+                        @chmod($bin_file, 0755);
                     }
-                } else {
-                    @unlink($path);
-                    @copy($tmp . DS . $filename, $path);
                 }
+            } else {
+                @unlink($path);
+                @copy($file->getPathname(), $path);
             }
         }
 
@@ -436,7 +465,42 @@ class Installer
                 break;
 
             case self::ZIP_EXTRACT_ERROR:
-                $msg = 'An error occurred while extracting the package';
+                $msg = 'Unable to extract the package. ';
+                if (self::$error_zip) {
+                    switch(self::$error_zip) {
+                        case \ZipArchive::ER_EXISTS:
+                            $msg .= "File already exists.";
+                            break;
+
+                        case \ZipArchive::ER_INCONS:
+                            $msg .= "Zip archive inconsistent.";
+                            break;
+
+                        case \ZipArchive::ER_MEMORY:
+                            $msg .= "Malloc failure.";
+                            break;
+
+                        case \ZipArchive::ER_NOENT:
+                            $msg .= "No such file.";
+                            break;
+
+                        case \ZipArchive::ER_NOZIP:
+                            $msg .= "Not a zip archive.";
+                            break;
+
+                        case \ZipArchive::ER_OPEN:
+                            $msg .= "Can't open file.";
+                            break;
+
+                        case \ZipArchive::ER_READ:
+                            $msg .= "Read error.";
+                            break;
+
+                        case \ZipArchive::ER_SEEK:
+                            $msg .= "Seek error.";
+                            break;
+                    }
+                }
                 break;
 
             default:

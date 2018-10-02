@@ -8,6 +8,7 @@ module.exports = {
             'codemirror',
             'chartist',
             'selectize',
+            'rangetouch',
             'remodal',
             'toastr',
             'bootstrap',
@@ -34,7 +35,7 @@ module.exports = {
         ],
         loaders: [
             { test: /\.css$/, loader: "style-loader!css-loader" },
-            { test: /\.js$/,  loader: 'babel', exclude: /node_modules/, query: { presets: ['es2015'] } }
+            { test: /\.js$/,  loader: 'babel', exclude: /node_modules/, query: { presets: ['es2015', 'stage-3'] } }
         ]
     }
 };

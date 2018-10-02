@@ -2,7 +2,7 @@
 return [
     '@class' => 'Grav\\Common\\File\\CompiledYamlFile',
     'filename' => 'plugins://markdown-notices/markdown-notices.yaml',
-    'modified' => 1473505988,
+    'modified' => 1535051086,
     'data' => [
         'enabled' => true,
         'built_in_css' => true,

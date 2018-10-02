@@ -1,10 +1,9 @@
+{% if uri.param('token') and uri.param('task') %}
 <section id="grav-login">
     {{ content|raw }}
 
-    {% include 'partials/messages.html.twig' %}
-
-    <form method="post" action="{{ base_url_relative ~ uri.path }}">
-        {% for field in page.header.form.fields %}
+    <form method="post" action="{{ (base_url_relative ~ uri.path)|e }}" classes="{{ form_outer_classes }}">
+        {% for field in form.fields %}
             {% set value = attribute(grav.twig.twig_vars, field.name) is defined ? attribute(grav.twig.twig_vars, field.name) : null %}
 
             {% if field.type %}
@@ -20,5 +19,6 @@
         {{ nonce_field('reset-form', 'reset-form-nonce')|raw }}
     </form>
 </section>
+{% endif %}
 
 
